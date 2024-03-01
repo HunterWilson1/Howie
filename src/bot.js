@@ -7,94 +7,99 @@ const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildVoiceStates,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent,
     ]
 });
 
 const soundsFolder = './sounds'; // Ensure this directory exists and contains .mp3 files
+let joinInterval = null;
+let lastVoiceChannel = null;
 
-async function performVoiceChannelAction() {
-    console.log('Checking all guilds for active voice channels...');
-    const guilds = client.guilds.cache.map(guild => guild);
+async function performVoiceChannelAction(voiceChannel) {
+    try {
+        const connection = joinVoiceChannel({
+            channelId: voiceChannel.id,
+            guildId: voiceChannel.guild.id,
+            adapterCreator: voiceChannel.guild.voiceAdapterCreator,
+        });
 
-    for (const guild of guilds) {
-        console.log(`Checking guild: ${guild.name}`);
+        const player = createAudioPlayer();
+        connection.subscribe(player);
 
-        // Attempt to find a voice channel that is not empty
-        let targetChannel = null;
-        for (const [channelId, channel] of guild.channels.cache.entries()) {
-            if (channel.type === 'GUILD_VOICE' && 
-                channel.members.size > 0 && // Check if there are users in the channel
-                channel.joinable && 
-                channel.speakable && 
-                channel.permissionsFor(guild.me).has(['VIEW_CHANNEL', 'CONNECT', 'SPEAK'])) {
-                targetChannel = channel;
-                break; // Break the loop once we find a suitable channel
+        player.on('stateChange', (oldState, newState) => {
+            if (newState.status === 'idle') {
+                console.log(`Finished playing audio in ${voiceChannel.name}. Leaving the channel.`);
+                connection.destroy(); // Leave the channel after playing audio
             }
-        }
+        });
 
-        if (targetChannel) {
-            console.log(`Attempting to join: ${targetChannel.name} in ${guild.name}, Members present: ${targetChannel.members.size}`);
-            try {
-                const connection = joinVoiceChannel({
-                    channelId: targetChannel.id,
-                    guildId: targetChannel.guild.id,
-                    adapterCreator: targetChannel.guild.voiceAdapterCreator,
-                });
-
-                const player = createAudioPlayer();
-                connection.subscribe(player);
-
-                player.on('stateChange', (oldState, newState) => {
-                    if (newState.status === 'idle') {
-                        console.log(`Finished playing audio in ${targetChannel.name}. Leaving the channel.`);
-                        connection.destroy(); // Leave the channel after playing audio
-                    }
-                });
-
-                fs.readdir(soundsFolder, (err, files) => {
-                    if (err) {
-                        console.error('Could not list the directory.', err);
-                        return;
-                    }
-
-                    const mp3Files = files.filter(file => file.endsWith('.mp3'));
-                    if (mp3Files.length > 0) {
-                        const randomIndex = Math.floor(Math.random() * mp3Files.length);
-                        const randomFile = mp3Files[randomIndex];
-                        const resource = createAudioResource(`${soundsFolder}/${randomFile}`);
-                        player.play(resource);
-                        console.log(`Playing audio file: ${randomFile} in ${targetChannel.name}`);
-                    } else {
-                        console.log('No MP3 files found in the sounds folder.');
-                        connection.destroy(); // Leave if there's nothing to play
-                    }
-                });
-                return; // Exit the function once a channel is successfully joined
-            } catch (error) {
-                console.error(`Error joining voice channel: ${error}`);
+        fs.readdir(soundsFolder, (err, files) => {
+            if (err) {
+                console.error('Could not list the directory.', err);
+                return;
             }
-        } else {
-            console.log(`No active voice channels found in ${guild.name} or missing permissions.`);
-        }
+
+            const mp3Files = files.filter(file => file.endsWith('.mp3'));
+            if (mp3Files.length > 0) {
+                const randomIndex = Math.floor(Math.random() * mp3Files.length);
+                const randomFile = mp3Files[randomIndex];
+                const resource = createAudioResource(`${soundsFolder}/${randomFile}`);
+                player.play(resource);
+                console.log(`Playing audio file: ${randomFile} in ${voiceChannel.name}`);
+            } else {
+                console.log('No MP3 files found in the sounds folder.');
+                connection.destroy(); // Leave if there's nothing to play
+            }
+        });
+    } catch (error) {
+        console.error(`Error joining voice channel: ${error}`);
     }
 }
 
+client.on('messageCreate', async message => {
+    // Ignore messages from the bot itself or messages that do not start with the prefix
+    if (message.author.bot) return;
+
+    if (message.content.startsWith('!join')) {
+        // Check if the message author is in a voice channel
+        const memberVoiceChannel = message.member.voice.channel;
+        if (!memberVoiceChannel) {
+            message.reply("You need to be in a voice channel for me to join!");
+            return;
+        }
+
+        // Save the last voice channel
+        lastVoiceChannel = memberVoiceChannel;
+
+        // If there's already an interval running, clear it and start a new one
+        if (joinInterval) {
+            clearInterval(joinInterval);
+        }
+
+        // Start the join-leave loop
+        joinInterval = setInterval(() => {
+            if (lastVoiceChannel) {
+                performVoiceChannelAction(lastVoiceChannel);
+            } else {
+                console.log("No last known voice channel to join.");
+                if (joinInterval) {
+                    clearInterval(joinInterval); // Stop the interval if there's no channel to join
+                }
+            }
+        }, Math.random() * (120000 - 60000) + 60000); // Random time between 1 and 2 minutes
+
+        message.reply(`I will join ${memberVoiceChannel.name} every 1-2 minutes.`);
+    } else if (message.content.startsWith('!stop') && joinInterval) {
+        clearInterval(joinInterval);
+        joinInterval = null;
+        lastVoiceChannel = null;
+        message.reply("I've stopped the automatic rejoining.");
+    }
+});
 
 client.on('ready', () => {
     console.log(`Logged in as ${client.user.tag}!`);
-    // Schedule the bot to join a channel at random intervals
-    const minInterval = 5 * 60 * 1000; // 5 minutes
-    const maxInterval = 10 * 60 * 1000; // 10 minutes
-
-    const performActionAtRandomInterval = () => {
-        const delay = Math.random() * (maxInterval - minInterval) + minInterval;
-        setTimeout(() => {
-            performVoiceChannelAction(); // Perform the join, play, leave actions
-            performActionAtRandomInterval(); // Schedule the next execution
-        }, delay);
-    };
-
-    performActionAtRandomInterval(); // Start the loop
 });
 
 client.login(process.env.DISCORD_BOT_TOKEN);
