@@ -87,9 +87,9 @@ client.on('messageCreate', async message => {
                     clearInterval(joinInterval); // Stop the interval if there's no channel to join
                 }
             }
-        }, Math.random() * (120000 - 60000) + 60000); // Random time between 1 and 2 minutes
+        }, Math.random() * (600000 - 300000) + 300000); // Random time between 1 and 2 minutes
 
-        message.reply(`I will join ${memberVoiceChannel.name} every 1-2 minutes.`);
+        message.reply(`I will join ${memberVoiceChannel.name} every 5-10 minutes.`);
     } else if (message.content.startsWith('!stop') && joinInterval) {
         clearInterval(joinInterval);
         joinInterval = null;
