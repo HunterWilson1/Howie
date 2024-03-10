@@ -58,37 +58,64 @@ async function performVoiceChannelAction(voiceChannel) {
 }
 
 client.on('messageCreate', async message => {
-    // Ignore messages from the bot itself or messages that do not start with the prefix
     if (message.author.bot) return;
 
-    if (message.content.startsWith('!join')) {
-        // Check if the message author is in a voice channel
+    if (message.content.toLowerCase() === 'hey howie') {
         const memberVoiceChannel = message.member.voice.channel;
         if (!memberVoiceChannel) {
-            message.reply("You need to be in a voice channel for me to join!");
-            return;
+            return message.reply("You need to be in a voice channel for me to respond!");
+        }
+        message.reply("Yes, I'm here, still sitting in the voice chat.");
+        lastVoiceChannel = memberVoiceChannel;
+    }
+
+    if (message.content.toLowerCase() === "summon") {
+        // Send an image directly without using MessageAttachment
+        await message.channel.send({ files: ['./images/IMG_0235.jpg'] }); // Make sure this path is correct
+
+        const memberVoiceChannel = message.member.voice.channel;
+        if (!memberVoiceChannel) {
+            return message.reply("You need to be in a voice channel to hear my sacred treasure!");
         }
 
-        // Save the last voice channel
-        lastVoiceChannel = memberVoiceChannel;
+        const connection = joinVoiceChannel({
+            channelId: memberVoiceChannel.id,
+            guildId: memberVoiceChannel.guild.id,
+            adapterCreator: memberVoiceChannel.guild.voiceAdapterCreator,
+        });
 
-        // If there's already an interval running, clear it and start a new one
+        const player = createAudioPlayer();
+        connection.subscribe(player);
+        const resource = createAudioResource(`${soundsFolder}/mahoraga.mp3`);
+        player.play(resource);
+
+        player.on('stateChange', (oldState, newState) => {
+            if (newState.status === 'idle') { // This means the audio has finished playing
+                console.log(`Finished playing audio in ${memberVoiceChannel.name}. Leaving the channel.`);
+                connection.destroy(); // Leave the voice channel
+            }
+        });
+    }
+
+    if (message.content.startsWith('!join')) {
+        const memberVoiceChannel = message.member.voice.channel;
+        if (!memberVoiceChannel) {
+            return message.reply("You need to be in a voice channel for me to join!");
+        }
+        lastVoiceChannel = memberVoiceChannel;
         if (joinInterval) {
             clearInterval(joinInterval);
         }
-
-        // Start the join-leave loop
         joinInterval = setInterval(() => {
             if (lastVoiceChannel) {
                 performVoiceChannelAction(lastVoiceChannel);
             } else {
                 console.log("No last known voice channel to join.");
                 if (joinInterval) {
-                    clearInterval(joinInterval); // Stop the interval if there's no channel to join
+                    clearInterval(joinInterval);
                 }
             }
-        }, Math.random() * (600000 - 300000) + 300000); // Random time between 1 and 2 minutes
-
+        }, Math.random() * (600000 - 300000) + 300000); // Random time between 5 and 10 minutes
         message.reply(`I will join ${memberVoiceChannel.name} every 5-10 minutes.`);
     } else if (message.content.startsWith('!stop') && joinInterval) {
         clearInterval(joinInterval);
